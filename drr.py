@@ -69,6 +69,30 @@ def detector_pixel_grid(pixel_size_mm, detector_size_mm=DETECTOR_SIZE_MM):
     return points_D, n_pixels
 
 
+def pixel_to_detector(rows, cols, n_pixels, pixel_size_mm):
+    """
+    Output: detector (u, v) in mm of image positions (row, col), which may be fractional (Image -> Detector)
+    """
+
+    # Same convention as detector_pixel_grid(): columns -> u, rows -> v, row 0 at v = -100 mm.
+    u = (np.asarray(cols, dtype=float) - (n_pixels - 1) / 2.0) * pixel_size_mm
+    v = (np.asarray(rows, dtype=float) - (n_pixels - 1) / 2.0) * pixel_size_mm
+
+    return u, v
+
+
+def detector_to_pixel(u, v, n_pixels, pixel_size_mm):
+    """
+    Output: fractional image position (row, col) of detector points (u, v) in mm (Detector -> Image)
+    """
+
+    # Exact inverse of pixel_to_detector(): col = u / px + (N - 1) / 2.
+    rows = np.asarray(v, dtype=float) / pixel_size_mm + (n_pixels - 1) / 2.0
+    cols = np.asarray(u, dtype=float) / pixel_size_mm + (n_pixels - 1) / 2.0
+
+    return rows, cols
+
+
 # ------------------------------------------------------------
 # Convert Detector Points and Source to CK
 # ------------------------------------------------------------
@@ -155,6 +179,21 @@ def ray_inside_sphere(source, directions, centre, radius):
     return 2.0 * np.sqrt(np.clip(discriminant, 0.0, None))
 
 
+def marker_path_lengths(source, directions, markers_CK=MARKERS_CK, radius=MARKER_RADIUS_MM):
+    """
+    Output: total length (mm) of every ray inside the spherical markers (shared by the sphere and vertebra DRRs)
+    """
+
+    # Each marker is a small steel sphere, so its chord comes from the same ray-sphere formula.
+    # The markers never overlap each other, so their chords can simply be added.
+    total = np.zeros(len(directions))
+
+    for marker in markers_CK:
+        total += ray_inside_sphere(source, directions, marker, radius)
+
+    return total
+
+
 # ------------------------------------------------------------
 # Sphere DRR
 # ------------------------------------------------------------
@@ -174,9 +213,7 @@ def sphere_drr(T_CK_D, pixel_size_mm, include_markers=True):
     if include_markers:
         # All three markers lie inside the sphere, so the part of a ray inside a marker was already counted
         # Adding (mu_steel - mu_bone) replaces that bone with steel instead of counting it twice.
-        for marker in MARKERS_CK:
-            marker_lengths = ray_inside_sphere(source, directions, marker, MARKER_RADIUS_MM)
-            line_integral += (MU_STEEL_PER_MM - MU_BONE_PER_MM) * marker_lengths
+        line_integral += (MU_STEEL_PER_MM - MU_BONE_PER_MM) * marker_path_lengths(source, directions)
 
     # The rays were made row by row from the pixel grid, so reshaping folds them back into the image
     return line_integral.reshape(n_pixels, n_pixels)
@@ -188,6 +225,55 @@ def transmitted_fraction(line_integral):
     """
 
     return np.exp(-line_integral)
+
+
+# ------------------------------------------------------------
+# Save and Display a Pair of DRRs (shared by the sphere and vertebra DRRs)
+# ------------------------------------------------------------
+
+def save_drr_pair(drr_A, drr_B, name, title, vmax=None):
+    """
+    Output: Q5/DRR_images/drr_<name>_A.png, drr_<name>_B.png and figures/drr_<name>_AB.png
+    """
+
+    import matplotlib.pyplot as plt
+
+    # Both images share one intensity range so they can be compared directly.
+    # By default the range covers everything; a smaller vmax windows the image so faint bone is visible.
+    if vmax is None:
+        vmax = max(drr_A.max(), drr_B.max())
+
+    # Also save each DRR as a PNG so it can be opened in VS Code or any image viewer.
+    # One image pixel = one detector pixel.
+    # origin="lower" keeps row 0 (v = -100 mm) at the bottom, matching the plots.
+    plt.imsave(f"Q5/DRR_images/drr_{name}_A.png", drr_A, cmap="gray", origin="lower", vmin=0.0, vmax=vmax)
+    plt.imsave(f"Q5/DRR_images/drr_{name}_B.png", drr_B, cmap="gray", origin="lower", vmin=0.0, vmax=vmax)
+
+    # Display the line integral sum(mu * L) so dense material is bright, as on a clinical radiograph.
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5.5), constrained_layout=True)
+
+    for ax, image, panel_title in zip(axes, [drr_A, drr_B], ["Detector A", "Detector B"]):
+
+        # origin="lower" puts row 0 (v = -100 mm) at the bottom, and extent labels the axes in detector mm.
+        shown = ax.imshow(
+            image,
+            cmap="gray",
+            origin="lower",
+            extent=[-DETECTOR_SIZE_MM / 2, DETECTOR_SIZE_MM / 2, -DETECTOR_SIZE_MM / 2, DETECTOR_SIZE_MM / 2],
+            vmin=0.0,
+            vmax=vmax
+        )
+
+        ax.set_title(panel_title, fontweight="semibold")
+        ax.set_xlabel("u (mm)")
+        ax.set_ylabel("v (mm)")
+
+    fig.colorbar(shown, ax=axes, label="line integral  Σ μL")
+    fig.suptitle(title, fontsize=16, fontweight="bold")
+
+    plt.savefig(f"figures/drr_{name}_AB.png", dpi=200, bbox_inches="tight")
+
+    return fig
 
 
 # ------------------------------------------------------------
@@ -204,36 +290,5 @@ if __name__ == "__main__":
     drr_A = sphere_drr(T_CK_DA, PIXEL_SIZE)
     drr_B = sphere_drr(T_CK_DB, PIXEL_SIZE)
 
-
-    # Also save each DRR as a PNG so it can be opened in VS Code or any image viewer.
-    # One image pixel = one detector pixel, and both use the same intensity range so they can be compared.
-    # origin="lower" keeps row 0 (v = -100 mm) at the bottom, matching the plots.
-    vmax = max(drr_A.max(), drr_B.max())
-    plt.imsave("Q5/DRR_images/drr_sphere_A.png", drr_A, cmap="gray", origin="lower", vmin=0.0, vmax=vmax)
-    plt.imsave("Q5/DRR_images/drr_sphere_B.png", drr_B, cmap="gray", origin="lower", vmin=0.0, vmax=vmax)
-
-    # Display the line integral sum(mu * L) so dense material is bright, as on a clinical radiograph.
-    # Both images share one intensity range so they can be compared directly.
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5.5), constrained_layout=True)
-
-    for ax, image, title in zip(axes, [drr_A, drr_B], ["Detector A", "Detector B"]):
-
-        # origin="lower" puts row 0 (v = -100 mm) at the bottom, and extent labels the axes in detector mm.
-        shown = ax.imshow(
-            image,
-            cmap="gray",
-            origin="lower",
-            extent=[-DETECTOR_SIZE_MM / 2, DETECTOR_SIZE_MM / 2, -DETECTOR_SIZE_MM / 2, DETECTOR_SIZE_MM / 2],
-            vmin=0.0,
-            vmax=vmax
-        )
-
-        ax.set_title(title, fontweight="semibold")
-        ax.set_xlabel("u (mm)")
-        ax.set_ylabel("v (mm)")
-
-    fig.colorbar(shown, ax=axes, label="line integral  Σ μL")
-    fig.suptitle("Sphere DRRs with 3 Markers", fontsize=16, fontweight="bold")
-
-    plt.savefig("figures/drr_sphere_AB.png", dpi=200, bbox_inches="tight")
+    save_drr_pair(drr_A, drr_B, "sphere", "Sphere DRRs with 3 Markers")
     plt.show()
