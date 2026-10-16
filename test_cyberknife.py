@@ -1,5 +1,6 @@
 """
-Tests for the CyberKnife assignment.
+Tests for the CyberKnife assignment (Parts 1 - 4).
+AI Attribution: Used AI (Claude) to help draft the tests; predictions were checked by hand (figures/part4_hand_validation.pdf).
 """
 
 import numpy as np
@@ -496,19 +497,20 @@ x_range = np.ptp(MARKERS_CK[:, 0])
 y_range = np.ptp(MARKERS_CK[:, 1])
 z_range = np.ptp(MARKERS_CK[:, 2])
 
-ax.set_box_aspect((x_range, y_range, z_range))
+# zoom < 1 shrinks the box slightly so the z-axis label is not cut off at the edge of the figure.
+ax.set_box_aspect((x_range, y_range, z_range), zoom=0.85)
 
 # Choose a clear viewing angle
 ax.view_init(elev=24, azim=-55)
 
 ax.grid(True, alpha=0.3)
 
-plt.tight_layout()
-
+# Extra padding keeps all three axis labels inside the saved image.
 plt.savefig(
     "figures/marker_positions_CK.png",
     dpi=300,
-    bbox_inches="tight"
+    bbox_inches="tight",
+    pad_inches=0.4
 )
 
 plt.show()
@@ -633,6 +635,9 @@ print("\n--- Testing Marker Projector ---")
 
 
 # Rough hand estimates based on the detector geometry and perspective magnification M = SDD / (SDD - w).
+# The 3D sketch and the full hand calculation for every marker are in figures/part4_hand_validation.pdf:
+#     u = z,  v_A = (x + y) / sqrt(2),  w_A = 1000 + (y - x) / sqrt(2),  v_B = (x - y) / sqrt(2),  w_B = 1000 + (x + y) / sqrt(2),
+#     then u_proj = M * u and v_proj = M * v.  For example M1 on Detector A: M = 2000 / (2000 - 1033.23) = 2.069, giving (22.76, 13.17).
 #
 # These are intentionally rounded because this is a qualitative
 # check rather than an exact numerical prediction.

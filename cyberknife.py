@@ -8,6 +8,8 @@ Part 3 - Forward Projector
 Part 4 - Marker Projector
 
 All distances are in mm unless stated otherwise.
+
+AI Attribution: Used AI (Claude) to help draft the code; validated with test_cyberknife.py and hand calculations.
 """
 
 import numpy as np

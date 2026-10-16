@@ -78,7 +78,7 @@ and one near the centre, while B has one near the centre and two near the bottom
 4. Marker positions
 Expected: each marker should appear exactly where the Part 4 forward projector puts it.
 Observed: all six brightest marker pixels are within half a pixel of the Part 4
-projections, e.g. A-M1 expected (22.76, 13.17) mm, found (22.75, 13.15) mm. This confirms the
+projections, e.g. A's M1 expected (22.76, 13.17) mm, found (22.75, 13.15) mm. This confirms the
 DRR ray geometry agrees with the independently tested projector.
 
 
