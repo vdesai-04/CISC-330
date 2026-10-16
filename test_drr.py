@@ -1,5 +1,6 @@
 """
 Tests for Part 5 of the CyberKnife assignment (sphere DRRs).
+AI Attribution: Used AI (Claude) to draft code for tests, and help write analysis, validated to make sure its accurate by proofreading and double checking they matched with given outputs
 """
 
 import numpy as np
@@ -35,6 +36,64 @@ from drr import (
 # This allows for very small floating-point errors in calculations.
 
 
+
+
+
+'''
+5A Test Analysis --- Expected vs Reality
+
+1. Size of the sphere's shadow
+Expected: the rays diverge from a point source, so an object at the centre is magnified by
+SDD / SAD = 2000 / 1000 = 2. A 50 mm radius should cast a shadow of radius about 100 mm,
+i.e. a disc about 200 mm across that touches all four edges of the 200 x 200 mm detector,
+leaving only the corners empty. More precisely, the shadow's edge is formed by rays tangent to
+the sphere, and the tangent points are slightly closer to the source than the centre, so the
+shadow radius is R_shadow = SDD * R / sqrt(SAD^2 - R^2) = 100.13 mm, just over 100 mm.
+
+Observed: the disc touches all four edges and the corner pixels are exactly 0. The largest
+radius of a non-zero pixel agrees with the predicted 100.13 mm.
+
+2. Brightness profile from centre to rim
+Expected: a ray passing at distance rho from the sphere's centre crosses a chord of length equivalent to 
+L = 2 * sqrt(R^2 - rho^2), so the pixel value is mu_bone * L. The centre ray crosses the full
+diameter (100 mm), giving 0.005 * 100 = 0.5, the maximum. Moving outward the chord shortens,
+slowly at first and then very steeply near the rim, because of the square-root shape.
+
+Observed: the central pixel is .5 on both detectors, and the profile through the centre
+(figures/drr_sphere_profile.png) lies exactly on the curve: flat near the centre and
+dropping drastically at the edges. The profile ends at approx .05 instead of 0. This is not an
+error, the detector ends at |100 mm| while the shadow extends to 100.13 mm, so the outermost
+pixels still see rays that touch the sphere with an approx 10 mm chord: 0.005 * 10 = 0.05.
+
+3. Detector A vs. Detector B
+Expected: a sphere centred on the rotation axis looks the same from every direction, so the
+sphere images at +45 and -45 degrees should be the same. The markers, however, are not
+symmetric about the axis (M1 right, M2 left, M3 posterior), so they should project to different
+places in the two images. That is what makes the 3-D reconstruction possible in Q7.
+
+Observed: without markers the largest difference between A and B is 1.4e-12 (floating-point
+rounding). With markers the dot patterns are clearly different: A has two markers near the top
+and one near the centre, while B has one near the centre and two near the bottom.
+
+4. Marker positions
+Expected: each marker should appear exactly where the Part 4 forward projector puts it.
+Observed: all six brightest marker pixels are within half a pixel of the Part 4
+projections, e.g. A-M1 expected (22.76, 13.17) mm, found (22.75, 13.15) mm. This confirms the
+DRR ray geometry agrees with the independently tested projector.
+
+
+5. Marker size
+Expected: a 3 mm marker near the centre is magnified about 2x, giving a dot about 6 mm across.
+A marker closer to the source is magnified even more, as magnification = SDD / source-marker distance.
+Observed: the dot widths computed from each marker's distance to the source range from 5.87 mm to
+6.25 mm, consistent with the ~6 mm dots in the image. A's M2 is the smallest
+(1021 mm from source A, magnification 1.96); while B's M2 is the largest (960 mm, magnification 2.08).
+'''
+
+
+
+
+
 # ------------------------------------------------------------
 # PATH LENGTH THROUGH A SPHERE
 # ------------------------------------------------------------
@@ -50,9 +109,11 @@ test_radius = 50.0
 # Test 1: Ray through the centre
 # Choice: checks the longest possible chord.
 # Prediction: the ray crosses the full diameter, so L = 2r = 100 mm.
+
 # Test 2: Ray passing 30 mm from the centre
 # Choice: checks a chord that is not through the centre.
 # Prediction: by Pythagoras L = 2 * sqrt(50^2 - 30^2) = 80 mm.
+
 # Test 3: Ray passing 60 mm from the centre
 # Choice: checks a ray that misses the sphere.
 # Prediction: the ray never enters the sphere, so L = 0.
@@ -62,7 +123,7 @@ targets = np.array([
     [0.0, 60.0, 0.0]
 ])
 
-# Aim each ray from the source so that it passes exactly through the target point at its closest approach.
+# Aim each ray from the source so that its closest approach to the sphere centre is the target point.
 # Moving along +x from the source, the closest approach to the origin is the target itself.
 test_directions = np.tile([1.0, 0.0, 0.0], (3, 1))
 test_sources = test_source + targets
@@ -89,23 +150,23 @@ print("\nSphere chord tests passed!")
 
 print("\n--- Testing Sphere DRR Against the Analytic Image ---")
 
-# 1 mm pixels are enough to check the sphere shape and keep the test fast.
+#Quick Check: 1mm to check sphere shape
 PIXEL_SIZE_MM = 1.0
 
 sphere_only_A = sphere_drr(T_CK_DA, PIXEL_SIZE_MM, include_markers=False)
 sphere_only_B = sphere_drr(T_CK_DB, PIXEL_SIZE_MM, include_markers=False)
 
-# Prediction, worked out from the geometry alone (no rays or transforms):
-# A pixel q mm from the detector centre is seen at angle alpha = atan(q / SDD) from the central beam.
+# Prediction:
+# A pixel q mm from the detector centre is seen at an angle alpha = arctan(q / SDD) from the central beam.
 # That ray passes rho = SAD * sin(alpha) from the sphere centre, so its chord is 2 * sqrt(r^2 - rho^2)
-# (0 when rho > r) and the pixel value is mu_bone times that chord.
+# the pixel value is mu_bone times that chord.
 points_D, n_pixels = detector_pixel_grid(PIXEL_SIZE_MM)
 q = np.hypot(points_D[:, 0], points_D[:, 1])
 rho = SAD_MM * np.sin(np.arctan(q / SDD_MM))
 expected_sphere = MU_BONE_PER_MM * 2.0 * np.sqrt(np.maximum(SPHERE_RADIUS_MM ** 2 - rho ** 2, 0.0))
 expected_sphere = expected_sphere.reshape(n_pixels, n_pixels)
 
-# The shadow edge is where the ray just grazes the sphere: rho = r, so q = SDD * tan(asin(r / SAD)).
+# The shadow edge is where the ray just touches the sphere: rho = r, so q = SDD * tan(asin(r / SAD)).
 shadow_radius = SDD_MM * np.tan(np.arcsin(SPHERE_RADIUS_MM / SAD_MM))
 
 print("\nPredicted shadow radius (mm):", shadow_radius)
@@ -173,8 +234,7 @@ for T_CK_D, detector_index, detector_name in [(T_CK_DA, 0, "Detector A"), (T_CK_
         # Convert the brightest pixel back to detector mm with the same convention as the grid.
         peak_uv = (np.array([col, row]) - (n - 1) / 2) * MARKER_PIXEL_SIZE_MM
 
-        # Prediction: the ray through the marker centre crosses its full diameter in steel instead of bone,
-        # so the extra line integral there is (mu_steel - mu_bone) * 2r.
+        # Prediction: the ray through the marker centre crosses its full diameter in steel instead of bone, so the extra line integral there is (mu_steel - mu_bone) * 2r.
         expected_peak = (MU_STEEL_PER_MM - MU_BONE_PER_MM) * 2.0 * MARKER_RADIUS_MM
 
         print(f"{name}  expected (u, v): {expected_uv.round(2)}   brightest pixel: {peak_uv.round(2)}"

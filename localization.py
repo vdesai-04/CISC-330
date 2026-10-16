@@ -8,6 +8,9 @@ Works on the raw line-integral image sum(mu * L) from drr.py / vertebra_drr.py, 
 because a PNG only keeps 256 grey levels and the display window.
 
 Image processing uses scipy.ndimage (https://scipy.org).
+
+
+AI attribution: Used Claude AI to help generate code, and validated AI output to ensure they are accurate
 """
 
 import numpy as np
@@ -29,13 +32,15 @@ from drr import (
 # PART 6: MARKER LOCALIZATION
 # ============================================================
 
-# The background window must be wider than a marker's shadow (about 2r x magnification 2 = 4 mm),
-# so that the opening below removes the markers completely and keeps only the smooth bone / sphere.
+# A marker's shadow is a disc about 2r x magnification 2 = 3 mm x 2 = 6 mm across (5.9 - 6.25 mm).
+# The square opening below removes any bright feature that cannot contain the whole window. A disc of diameter D
+# only contains a square of side D / sqrt(2), so the window must be wider than about 6.25 / sqrt(2) = 4.4 mm.
+# 6 mm removes the markers completely with a margin, while staying narrow enough to follow the bone / sphere.
 BACKGROUND_WINDOW_MM = 6.0
 
 # Threshold on the steel signal (sum(mu * L) above the background).
-# A marker peaks at mu_steel * 2r = 1.88, and the largest leftover bone edge after background removal is about 0.16,
-# so 0.5 separates them with a wide margin on both sides.
+# A marker peaks at mu_steel * 2r = 0.94 * 3 = 2.82, and the largest leftover bone edge after background removal
+# is about 0.16, so 0.5 separates them with a wide margin on both sides.
 MARKER_THRESHOLD = 0.5
 
 # Blobs much smaller or larger than one marker's shadow are noise or merged markers, not single markers.

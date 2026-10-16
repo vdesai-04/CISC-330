@@ -2,15 +2,7 @@
 CyberKnife Assignment - CISC/CMPE 330
 
 question 6 - Visual (manual) marker localization
-
-Run this yourself:  python visual_localization.py
-For each DRR a window opens:
-  1. Click roughly on each of the 3 markers (any order), then the window closes.
-  2. A 10 mm x 10 mm zoom around each of your rough clicks opens: click the centre of the marker.
-The clicked centres are converted from image pixels to detector mm (Image -> Detector) and saved to
-Q6/visual_clicks.json, which localization.py then includes in its comparison table.
-
-The zoom is centred on your own rough click, never on the true position, so the true answer is not given away.
+Attribution: Used Claude AI to help generate the code, ran validation via visual_localization.py
 """
 
 import json

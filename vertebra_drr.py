@@ -10,6 +10,8 @@ finding where each ray crosses the mesh surface, and turning those crossings int
 Ray-mesh intersection uses the trimesh library (https://trimesh.org) with the Embree ray engine
 (embreex). Without embreex installed, trimesh falls back to a pure-Python engine that is
 thousands of times slower.
+
+AI Attribution: Used AI (Claude) to draft this code, and validated the output via test_vertebra_drr.py
 """
 
 import numpy as np
@@ -54,33 +56,35 @@ def load_phantom_mesh(stl_path=VERTEBRA_STL_PATH, T_CK_MD=T_CK_MD):
 
     mesh = trimesh.load(stl_path, force="mesh")
 
-    # The STL is defined in the MD frame. T_CK_MD is the identity for this assignment,
-    # but the step is kept so the code stays correct if the phantom is ever placed differently.
+    # The STL is defined in the MD frame. T_CK_MD is the identity here because the MD and CK frames coincide,
+    # but the transform is applied anyway so the code stays correct if the phantom is ever placed differently.
     mesh.apply_transform(T_CK_MD)
 
     return mesh
 
 
 # ------------------------------------------------------------
-# B2: Separate the Vertebra, Markers and Fragments
+# B2: Separate the Vertebra, Markers and Internal Cavities
 # ------------------------------------------------------------
 
 def split_phantom(mesh, markers_CK=MARKERS_CK, match_distance_mm=MARKER_MATCH_DISTANCE_MM):
     """
-    Output: bone mesh, list of marker meshes (in the same order as markers_CK), list of leftover fragments
+    Output: bone mesh, list of marker meshes (in the same order as markers_CK), list of other pieces
+    (two small internal cavities inside the bone, which are ignored)
     """
 
     # The STL holds several disconnected closed surfaces, so split it into one mesh per piece.
     pieces = mesh.split(only_watertight=False)
 
-    # The vertebra is by far the largest piece.
+    # The vertebra is the piece with by far the most triangles.
     pieces = sorted(pieces, key=lambda piece: len(piece.faces), reverse=True)
     bone = pieces[0]
 
     marker_meshes = [None] * len(markers_CK)
     fragments = []
 
-    # Every other piece is either a marker (its centre sits on a known marker position) or a leftover fragment.
+    # Every other piece is either a marker (its centre sits on a known marker position) or one of two small
+    # internal cavities. Ignoring the cavities treats them as solid bone, which adds at most mu_bone * 2.8 mm = 0.014.
     for piece in pieces[1:]:
 
         centre = piece.bounds.mean(axis=0)
@@ -111,17 +115,17 @@ def mesh_hit_distances(mesh, source, directions):
     # Every ray starts at the same X-ray source.
     origins = np.broadcast_to(source, directions.shape)
 
-    # multiple_hits=True returns every crossing, not just the first, because a ray through the vertebra
-    # can enter and leave the bone several times (body, canal, processes).
+    # Need every crossing because a ray through the vertebra can enter and leave the bone several times.
     hit_points, ray_index, _ = mesh.ray.intersects_location(origins, directions, multiple_hits=True)
 
     # The ray is source + t * d with |d| = 1, so the distance of a hit point P along its ray is (P - source) . d
     t = np.sum((hit_points - source) * directions[ray_index], axis=1)
 
-    # trimesh returns the hits in no particular order, so group them by ray and sort each ray's hits by distance.
+    # trimesh returns the hits in no particular order; the enter/exit pairing needs each ray's hits sorted by distance.
     order = np.lexsort((t, ray_index))
 
     return ray_index[order], t[order]
+
 
 
 # ------------------------------------------------------------
@@ -136,8 +140,8 @@ def hits_to_path_lengths(ray_index, t, n_rays):
     # Number of surface crossings for every ray (0 for rays that miss the mesh).
     hit_counts = np.bincount(ray_index, minlength=n_rays)
 
-    # A closed surface is crossed in pairs: enter, exit, enter, exit, ...
-    # An odd count means the ray grazed an edge or vertex and one crossing was lost, so its pairs are unknown.
+    # An odd count means the ray touched an edge or vertex and one crossing was lost, so its enter/exit pairs
+    # cannot be determined.
     odd_rays = hit_counts % 2 == 1
 
     # Position of every hit within its own ray: 0, 1, 2, ... (hits are already sorted by ray, then by distance).
@@ -148,7 +152,7 @@ def hits_to_path_lengths(ray_index, t, n_rays):
     signed_t = np.where(position_in_ray % 2 == 0, -t, t)
     path_lengths = np.bincount(ray_index, weights=signed_t, minlength=n_rays)
 
-    # Rays with an odd count cannot be paired, so they are set to 0 and reported instead of guessed.
+    # Rays with an odd count cannot be paired, so their length is set to 0 and they are counted instead of guessed.
     path_lengths[odd_rays] = 0.0
 
     return path_lengths, int(odd_rays.sum())
@@ -175,7 +179,8 @@ def vertebra_drr(T_CK_D, pixel_size_mm, bone, marker_meshes=None, marker_model="
 
     marker_model = "analytic": steel spheres of radius MARKER_RADIUS_MM at MARKERS_CK (the MD marker table),
                                the same markers used in Q4, Q6 and Q7, so the true projections are known exactly.
-    marker_model = "mesh":     the marker spheres from the STL, which sit 0.3 - 0.5 mm from the MD marker table.
+    marker_model = "mesh":     the 2 mm marker spheres from the STL (smaller than the 3 mm in the assignment),
+                               which sit 0.3 - 0.5 mm from the MD marker table. Used only for comparison.
     """
 
     # B3: the rays are exactly the same as for the sphere DRR. Only the object they pass through changes.
@@ -200,10 +205,10 @@ def vertebra_drr(T_CK_D, pixel_size_mm, bone, marker_meshes=None, marker_model="
         else:
             raise ValueError("marker_model must be 'analytic' or 'mesh'.")
 
-        # Unlike the sphere phantom, the markers are glued onto the bone surface (their centres lie within
+        # Unlike 5A, the markers are glued onto the bone surface (their centres lie within
         # 0.1 mm of it), so about half of each marker is outside the bone. Their full chord is counted as steel.
         # The half inside the bone is then also counted as bone, which overstates sum(mu * L) by at most
-        # mu_bone * 2r = 0.01, about 0.5 % of a marker's own value of about 1.9.
+        # mu_bone * 2r = 0.005 * 3 = 0.015, about 0.5 % of a marker's own value of 0.94 * 3 = 2.82.
         line_integral += MU_STEEL_PER_MM * marker_lengths
 
     # The rays were made row by row from the pixel grid, so reshaping folds them back into the image.
@@ -224,14 +229,14 @@ if __name__ == "__main__":
 
     # B1 + B2: load the phantom once and separate its pieces.
     bone, marker_meshes, fragments = split_phantom(load_phantom_mesh())
-    print(f"Bone: {len(bone.faces)} triangles | markers: {len(marker_meshes)} | fragments dropped: {len(fragments)}")
+    print(f"Bone: {len(bone.faces)} triangles | markers: {len(marker_meshes)} | internal cavities ignored: {len(fragments)}")
 
     start = time.time()
     drr_A, odd_A = vertebra_drr(T_CK_DA, PIXEL_SIZE, bone, marker_meshes)
     drr_B, odd_B = vertebra_drr(T_CK_DB, PIXEL_SIZE, bone, marker_meshes)
     print(f"Both DRRs at {PIXEL_SIZE} mm in {time.time() - start:.1f} s | rays dropped for odd hit counts: A {odd_A}, B {odd_B}")
 
-    # The bone reaches only about 0.35 while the markers reach about 1.9, so on a full range the bone looks almost
-    # black. The display is windowed to 0 - 1.0 so the bone is visible; the markers then saturate to white.
-    save_drr_pair(drr_A, drr_B, "vertebra", "Vertebra DRRs with 3 Markers", vmax=1.0)
+    # The bone reaches only about 0.35 while the markers reach about 3.0, so on a full range the bone looks almost
+    # black. The display is windowed to 0 - 0.4 so the bone is visible; the markers then saturate to white.
+    save_drr_pair(drr_A, drr_B, "vertebra", "Vertebra DRRs with 3 Markers", vmax=0.4)
     plt.show()

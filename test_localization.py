@@ -1,6 +1,108 @@
 """
 Tests for Part 6 of the CyberKnife assignment (marker localization).
+Attribution: Claude AI was used to help generate the test code; I checked each prediction and ran the tests to validate it.
 """
+
+'''
+Q6 Test - Expected vs Actual
+
+AI usage: this analysis was written with the help of Claude (Anthropic); all numbers come from
+running localization.py, test_localization.py and my own visual clicks (Q6/visual_clicks.json),
+and I checked each explanation.
+
+Method summary
+Segmented (computed): localization.py works on the raw DRR values (not the PNGs, which keep only
+256 grey levels). It (1) removes the slowly varying bone / sphere background with a grey opening,
+(2) thresholds the remaining steel signal and keeps blobs about the size of one marker's shadow,
+and (3) takes the intensity-weighted centroid of each blob, converted from image pixels to detector
+mm with the same pixel convention used to build the DRRs in Q5.
+Visual: visual_localization.py displays each of the four DRRs (sphere A/B, vertebra A/B) at full
+0.1 mm resolution. I clicked roughly on each marker, then clicked the centre of the marker in a
+10 x 10 mm zoom centred on my rough click (never on the true position). Clicks were converted to
+detector mm and saved.
+
+True: the Q4 forward projections of the marker-table positions.
+Results: Q6/localization_results.md, figures/localization_sphere.png, figures/localization_vertebra.png.
+
+1. Segmented vs. True
+Expected: the DRRs contain no noise, and the centroid uses every pixel of a marker's shadow
+(about 2,800 pixels for a ~6 mm disc at 0.1 mm), so the computed centre should be accurate to a
+small fraction of a pixel. The remaining error comes only from sampling the disc on a pixel grid.
+
+Observed: all 3 markers were found in all 4 DRRs. Errors at 0.1 mm pixels are 0.0001 - 0.0022 mm
+(sphere, mean 0.0009 mm) and 0.0004 - 0.0028 mm (vertebra, mean 0.0015 mm), i.e. at most
+1/35 of a pixel.
+
+2. Effect of background removal
+Expected: on the vertebra the bone behind a marker is not flat, so without removing it the brighter
+side would pull the weighted centroid towards itself.
+
+Observed: without background removal the vertebra errors grow up to 0.0155 mm (mean about 0.01 mm),
+roughly 7 to 10 times larger; with it they drop to 0.0004 - 0.0028 mm. Removing the background
+therefore matters, though even without it the error is far below one pixel.
+
+3. Effect of pixel size
+Expected: a finer grid samples the disc's edge more finely, so the error should shrink as the
+pixels get smaller.
+
+Observed: the mean error falls from about 0.04 mm at 1 mm pixels to 0.009 mm at 0.5 mm, 0.005 mm at
+0.25 mm and 0.001 mm at 0.1 mm. The maximum error is always below 0.07 pixels, so the method
+stays sub-pixel at every resolution.
+
+4. Visual vs. true
+Expected: a careful click should land within a few pixels of the centre (roughly 0.1 - 0.5 mm).
+
+Observed: my visual errors were 0.71 - 2.01 mm (7 - 20 pixels), mean 1.57 mm (sphere 1.39 mm,
+vertebra 1.75 mm), larger than I expected. The errors were mostly vertical (mean |dv| 1.48 mm vs.
+mean |du| 0.43 mm) but not in a consistent direction: on average they cancel (mean du = 0.00 mm,
+dv = -0.07 mm), so they are random scatter rather than a fixed offset.
+
+To rule out a problem with the tool, I ran a calibration test: the same zoom window showing a
+sharp cross at a known position. My clicks landed 0.1 - 0.3 pixels (about 0.02 mm) from the cross
+in both x and y, and a simulated click at each true marker centre was recorded with zero error.
+The tool and screen therefore record clicks correctly, and the marker errors come from judging the
+centre itself. A sharp cross gives the eye an exact point to aim at; a marker's shadow is a soft
+dome whose brightness rises gradually to a broad plateau, with no sharp feature at its centre.
+The errors come from how I judged the centre of the markers: I looked for the bright area inside
+the grey rim and clicked what I judged to be its middle. Because that bright area is a broad
+plateau with no sharp centre, my judgement was off from the true centre by much more than I
+expected. Why the error was mainly vertical is not certain; it may be that I located the left and
+right edges of the bright area more reliably than the top and bottom. The vertebra clicks were
+slightly worse than the sphere clicks (1.75 vs. 1.39 mm), consistent with the uneven bone
+background around some markers, although with only six clicks per phantom this difference is not
+conclusive.
+
+5. Visual vs. segmented
+Expected: since the segmented centres are almost exactly at the true positions, the visual -
+segmented differences should be almost identical to the visual - true errors.
+
+Observed: they agree to within 0.003 mm, so the visual - segmented difference is also
+0.71 - 2.01 mm. The algorithm is about 1,000 times more accurate than visual localization
+(mean 0.0012 mm vs. 1.57 mm).
+
+6. Consequence for reconstruction (bridge to Q7 / Q10)
+Reconstructing the markers in 3-D from the segmented centres (Q7) gives marker reconstruction
+errors of at most 0.0008 mm and REM of at most 0.0014 mm, i.e. essentially perfect.
+
+Visual localization errors of ~1.6 mm are a realistic example of the marker localization error
+(MLE) studied in Q10, which determines whether such errors keep the 3-D reconstruction error
+below the clinical limit of 5 mm.
+
+Conclusion
+Automatic segmentation recovered every marker centre to within 0.003 mm (sub-pixel at every
+resolution), helped by removing the bone background. Visual localization was about 1,000 times
+less accurate (mean 1.57 mm). The calibration test shows this is a limitation of judging the
+centre of a soft-edged blob by eye, not of the clicking tool.
+Limitations: the DRRs are noise-free with perfectly sharp-edged markers and no scatter, so the
+segmentation accuracy is a best case; real X-ray images would give larger errors. The visual
+test used one observer and 12 clicks, so the visual statistics are only indicative. The markers
+were clicked on the recomputed DRR arrays displayed in matplotlib rather than on the saved PNGs;
+the images are identical, but the arrays keep the full intensity range.
+
+'''
+
+
+
 
 import numpy as np
 
@@ -76,9 +178,9 @@ print("\nImage <-> Detector conversion passed!")
 
 print("\n--- Testing Localization on a Synthetic Image ---")
 
-# Choice: an image whose answer is known without any DRR code. Three marker shadows (disks of radius 2 mm,
-# peak 1.88 like a 2 mm steel marker) at known off-grid positions, on a sloping background like bone,
-# plus a small speck that is far too small to be a marker.
+# Choice: an image whose answer is known without any DRR code. Three marker shadows (disks of radius 3 mm,
+# peak 2.82 like a 3 mm steel marker magnified about 2x) at known off-grid positions, on a sloping background
+# like bone, plus a small speck that is far too small to be a marker.
 pixel_size_mm = 0.1
 points_D, n_pixels = detector_pixel_grid(pixel_size_mm)
 u_grid = points_D[:, 0].reshape(n_pixels, n_pixels)
@@ -93,10 +195,10 @@ true_centres = np.array([
 image = 0.3 + 0.002 * u_grid
 for centre_u, centre_v in true_centres:
     rho_squared = (u_grid - centre_u) ** 2 + (v_grid - centre_v) ** 2
-    image = image + 1.88 * np.sqrt(np.clip(1.0 - rho_squared / 2.0 ** 2, 0.0, None))
+    image = image + 2.82 * np.sqrt(np.clip(1.0 - rho_squared / 3.0 ** 2, 0.0, None))
 
 speck = ((u_grid + 70.0) ** 2 + (v_grid + 70.0) ** 2) < 0.3 ** 2
-image[speck] += 1.88
+image[speck] += 2.82
 
 found, areas = localize_markers(image, pixel_size_mm)
 matched, errors = match_to_truth(found, true_centres)
